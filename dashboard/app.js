@@ -61,7 +61,8 @@
 
   // The farm plan is the same derivation main.ts writes to board.json: category, chains, TVL and age
   // decide the action, the capital, the hold and every cost and time. No name is special-cased.
-  function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
+  // The page recomputes it from the row, so a stale board would show up as a mismatch.
+  function mainChain(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
   function capitalFor(p) {
     if (p.tvl_usd >= 5e9) return 250;
     if (p.tvl_usd >= 1e9) return 150;
@@ -74,38 +75,47 @@
     if (age < 365) return 45;
     return 30;
   }
-  function actionFor(p, capital, chain) {
-    var c = (p.category || '').toLowerCase();
-    var name = p.name;
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Supply $' + capital + ' of USDC to ' + name + ' on ' + chain + ' and keep the position open.';
-    if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Provide $' + capital + ' of liquidity to ' + name + "'s main pool on " + chain + ' and keep the position open.';
-    if (c.indexOf('bridge') >= 0) return 'Bridge $' + capital + ' of USDC to ' + chain + ' through ' + name + ' and use the bridged funds in its app.';
-    if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return "Stake $" + capital + " of the chain's staking asset through " + name + ' and keep the receipt.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Deposit $' + capital + ' of USDC as margin on ' + name + ' and open one small hedge.';
-    if (c.indexOf('prediction') >= 0) return 'Fund $' + capital + ' and place one market position on ' + name + '.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' vault on ' + chain + ' and keep the shares.';
-    if (c.indexOf('stable') >= 0) return 'Mint or deposit $' + capital + ' of the stable asset through ' + name + ' on ' + chain + '.';
-    if (c.indexOf('rwa') >= 0) return "Mint $" + capital + " of the protocol's yield asset on " + chain + ' and hold it.';
-    if (c.indexOf('insurance') >= 0) return 'Buy $' + capital + ' of cover from ' + name + ' on ' + chain + ' and keep the policy.';
-    return 'Deposit $' + capital + ' of USDC into ' + name + ' on ' + chain + ' and keep the position open.';
-  }
-  function stepText(step) {
-    var s = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
-    if (s.length > 600) s = s.slice(0, 596) + '...';
-    if (s.length < 20) s = s + " Hold the position and check the protocol's own page.";
-    return s;
-  }
   function gasFor(chain) {
     var c = (chain || '').toLowerCase();
     if (c === 'ethereum') return 9;
     if (c === 'solana' || c === 'base' || c === 'arbitrum' || c === 'optimism' || c === 'polygon' || c === 'binance') return 1;
     return 3;
   }
+  // One row per category family, in order: the keywords that select it and the action
+  // it prescribes. The first matching row wins; the fallback at the end covers the rest.
+  var FARM_ACTIONS = [
+    { keys: ['lend', 'cdp', 'collateral'], text: function (name, capital, chain) { return 'Supply $' + capital + ' of USDC to ' + name + ' on ' + chain + ' and keep the position open.'; } },
+    { keys: ['dex', 'yield', 'leveraged farm'], text: function (name, capital, chain) { return 'Provide $' + capital + ' of liquidity to ' + name + "'s main pool on " + chain + ' and keep the position open.'; } },
+    { keys: ['bridge'], text: function (name, capital, chain) { return 'Bridge $' + capital + ' of USDC to ' + chain + ' through ' + name + ' and use the bridged funds in its app.'; } },
+    { keys: ['staking', 'restak'], text: function (name, capital, chain) { return "Stake $" + capital + " of the chain's staking asset through " + name + ' and keep the receipt.'; } },
+    { keys: ['perpetual', 'derivative'], text: function (name, capital, chain) { return 'Deposit $' + capital + ' of USDC as margin on ' + name + ' and open one small hedge.'; } },
+    { keys: ['prediction'], text: function (name, capital, chain) { return 'Fund $' + capital + ' and place one market position on ' + name + '.'; } },
+    { keys: ['curator', 'allocator'], text: function (name, capital, chain) { return 'Deposit $' + capital + ' into a ' + name + ' vault on ' + chain + ' and keep the shares.'; } },
+    { keys: ['stable'], text: function (name, capital, chain) { return 'Mint or deposit $' + capital + ' of the stable asset through ' + name + ' on ' + chain + '.'; } },
+    { keys: ['rwa'], text: function (name, capital, chain) { return "Mint $" + capital + " of the protocol's yield asset on " + chain + ' and hold it.'; } },
+    { keys: ['insurance'], text: function (name, capital, chain) { return 'Buy $' + capital + ' of cover from ' + name + ' on ' + chain + ' and keep the policy.'; } }
+  ];
+  function actionFor(p, capital, chain) {
+    var c = (p.category || '').toLowerCase();
+    for (var i = 0; i < FARM_ACTIONS.length; i++) {
+      var row = FARM_ACTIONS[i];
+      if (row.keys.some(function (key) { return c.indexOf(key) >= 0; })) return row.text(p.name, capital, chain);
+    }
+    return 'Deposit $' + capital + ' of USDC into ' + p.name + ' on ' + chain + ' and keep the position open.';
+  }
+  function stepText(step) {
+    var joined = step.text + ' Cost: ' + step.cost + '. Time: ' + step.time + '.';
+    if (joined.length > 600) return joined.slice(0, 596) + '...';
+    if (joined.length < 20) return joined + " Hold the position and check the protocol's own page.";
+    return joined;
+  }
+  function farmBudget(p) {
+    var chain = mainChain(p);
+    return { chain: chain, capital: capitalFor(p), hold: holdDaysFor(p.age_days), gas: gasFor(chain) };
+  }
   function farmSteps(p) {
-    var chain = chainOf(p);
-    var capital = capitalFor(p);
-    var hold = holdDaysFor(p.age_days);
-    var gas = gasFor(chain);
+    var budget = farmBudget(p);
+    var chain = budget.chain, capital = budget.capital, hold = budget.hold, gas = budget.gas;
     return [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'about $' + gas + ' of gas for the first transaction on ' + chain, time: '5 minutes' },
       { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + gas + ' of gas on ' + chain, time: '15 minutes to set up' },
@@ -350,6 +360,17 @@
     }
   }
 
+  // The footer's three cautions, in the page's own words: what the numbers are,
+  // what they are not, and what to check before any money moves.
+  function footer() {
+    return el('footer', { class: 'panel model' },
+      el('h2', { text: 'Read this before you farm' }),
+      el('p', { class: 'sub', text: 'Implied value is this radar\u2019s own estimate from the snapshot\u2019s TVL, seven-day growth, age and chain breadth. It is not a price, not a prediction that a token will launch, and not financial advice.' }),
+      el('p', { class: 'sub', text: 'A protocol on this board records no token in the snapshot; that is not proof it has none. Check the protocol\u2019s own site and its points or rewards page, claim only from links it publishes, and never pay anyone to claim an airdrop.' }),
+      el('p', { class: 'sub', text: 'Snapshot ' + (DATA.as_of || '2026-11-14') + ', DefiLlama protocol index. Farm with money you can afford to lose, and keep a log of every wallet, date and transaction.' })
+    );
+  }
+
   function render() {
     app.textContent = '';
     var shell = el('div', { class: 'shell' });
@@ -358,6 +379,7 @@
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
+    shell.appendChild(footer());
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');
     if (!dialog.isConnected) app.appendChild(dialog);
