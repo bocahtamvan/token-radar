@@ -167,30 +167,31 @@ export class SnapshotError extends Error {
 
 const DAY_MS = 86_400_000;
 
-/** A finite number, else `fallback`. */
-function finite(value: unknown, fallback: number): number {
+/** A finite number, else `fallback`: the snapshot's nulls and gaps become a known value, never NaN. */
+function finiteNumber(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-/** A whole day count from `from` to `to`, clamped at zero; null when either date is absent or bad. */
+/** Whole days from `listedAt` to `asOf`, clamped at zero; null when either date is absent or unparsable. */
 export function ageDays(asOf: string, listedAt: string | null): number | null {
   if (listedAt === null) return null;
-  const a = Date.parse(`${asOf}T00:00:00Z`);
-  const b = Date.parse(`${listedAt}T00:00:00Z`);
-  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-  return Math.max(0, Math.floor((a - b) / DAY_MS));
+  const asOfMs = Date.parse(`${asOf}T00:00:00Z`);
+  const listedMs = Date.parse(`${listedAt}T00:00:00Z`);
+  if (!Number.isFinite(asOfMs) || !Number.isFinite(listedMs)) return null;
+  return Math.max(0, Math.floor((asOfMs - listedMs) / DAY_MS));
 }
 
 /** The four multipliers and the implied value one protocol gets under `model`. */
 export function impliedValue(protocol: SnapshotProtocol, asOf: string, model: ModelConstants): { implied: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
-  const rawGrowth = finite(protocol.change_7d, 0);
+  const rawGrowth = finiteNumber(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
   const ageForModel = age ?? model.unknown_age_days;
-  const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-  const chainCount = protocol.chains.length;
-  const chainMult = 1 + model.chain_step * Math.min(Math.max(chainCount - 1, 0), model.chain_max_extra);
+  const cappedAge = Math.min(Math.max(ageForModel, 0), model.maturity_days);
+  const maturityMult = model.maturity_floor + (cappedAge / model.maturity_days) * model.maturity_range;
+  const extraChains = Math.min(Math.max(protocol.chains.length - 1, 0), model.chain_max_extra);
+  const chainMult = 1 + model.chain_step * extraChains;
   const base = protocol.tvl_usd * model.base_multiple;
   const implied = Math.max(1, Math.round(base * growthMult * maturityMult * chainMult));
   return { implied, growthPct, growthMult, maturityMult, chainMult, age };
