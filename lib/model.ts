@@ -276,19 +276,28 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
+/** One farm step as the gate wants it: a single string carrying the action, the cost and the time. */
 export function stepText(step: FarmStep): string {
-  let s = `${step.text} Cost: ${step.cost}. Time: ${step.time}.`;
-  if (s.length > 600) s = `${s.slice(0, 596)}...`;
-  if (s.length < 20) s = `${s} Hold the position and check the protocol's own page.`;
-  return s;
+  const joined = `${step.text} Cost: ${step.cost}. Time: ${step.time}.`;
+  if (joined.length > 600) return `${joined.slice(0, 596)}...`;
+  if (joined.length < 20) return `${joined} Hold the position and check the protocol's own page.`;
+  return joined;
 }
 
-/** The first chain a protocol names, or a neutral phrase. */
-function chainOf(p: SnapshotProtocol): string {
+/** Everything a farm plan is sized from: the chain, the capital, the hold and the gas. */
+export interface FarmBudget {
+  chain: string;
+  capital: number;
+  holdDays: number;
+  gasUsd: number;
+}
+
+/** The first chain a protocol names, or a neutral phrase when it names none. */
+function mainChain(p: SnapshotProtocol): string {
   return p.chains.length > 0 ? p.chains[0]! : 'its main chain';
 }
 
-/** How much capital one farm position needs, from the protocol's own TVL. */
+/** How much capital one farm position needs, sized by the protocol's own TVL. */
 function capitalFor(p: SnapshotProtocol): number {
   if (p.tvl_usd >= 5_000_000_000) return 250;
   if (p.tvl_usd >= 1_000_000_000) return 150;
@@ -296,7 +305,7 @@ function capitalFor(p: SnapshotProtocol): number {
   return 50;
 }
 
-/** How long to hold, from the protocol's age: younger protocols get a longer qualifying window. */
+/** How long to hold, from the protocol's age: a younger protocol gets a longer qualifying window. */
 function holdDaysFor(age: number | null): number {
   if (age === null) return 30;
   if (age < 180) return 60;
@@ -304,24 +313,7 @@ function holdDaysFor(age: number | null): number {
   return 30;
 }
 
-/** The category's one action, in the words a farmer can follow. */
-function actionFor(p: SnapshotProtocol, capital: number, chain: string): string {
-  const c = (p.category ?? '').toLowerCase();
-  const name = p.name;
-  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Supply $${capital} of USDC to ${name} on ${chain} and keep the position open.`;
-  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return `Provide $${capital} of liquidity to ${name}'s main pool on ${chain} and keep the position open.`;
-  if (c.includes('bridge')) return `Bridge $${capital} of USDC to ${chain} through ${name} and use the bridged funds in its app.`;
-  if (c.includes('staking') || c.includes('restak')) return `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt.`;
-  if (c.includes('perpetual') || c.includes('derivative')) return `Deposit $${capital} of USDC as margin on ${name} and open one small hedge.`;
-  if (c.includes('prediction')) return `Fund $${capital} and place one market position on ${name}.`;
-  if (c.includes('curator') || c.includes('allocator')) return `Deposit $${capital} into a ${name} vault on ${chain} and keep the shares.`;
-  if (c.includes('stable')) return `Mint or deposit $${capital} of the stable asset through ${name} on ${chain}.`;
-  if (c.includes('rwa')) return `Mint $${capital} of the protocol's yield asset on ${chain} and hold it.`;
-  if (c.includes('insurance')) return `Buy $${capital} of cover from ${name} on ${chain} and keep the policy.`;
-  return `Deposit $${capital} of USDC into ${name} on ${chain} and keep the position open.`;
-}
-
-/** Gas for one simple transaction on a chain, in whole dollars, from the chain's usual fees. */
+/** Gas for one simple transaction on a chain, in whole dollars, from that chain's usual fees. */
 function gasFor(chain: string): number {
   const c = chain.toLowerCase();
   if (c === 'ethereum') return 9;
@@ -329,16 +321,45 @@ function gasFor(chain: string): number {
   return 3;
 }
 
+/** Size one protocol's farm plan from its own record: category, chains, TVL and age. */
+function budgetFor(p: SnapshotProtocol, age: number | null): FarmBudget {
+  const chain = mainChain(p);
+  return { chain, capital: capitalFor(p), holdDays: holdDaysFor(age), gasUsd: gasFor(chain) };
+}
+
+// One row per category family: the keywords that select it, in order, and the action
+// it prescribes. The first row whose keywords match the protocol's category wins,
+// exactly as the if-chain it replaces did; the fallback row at the end covers the rest.
+const FARM_ACTIONS: Array<{ keys: string[]; text: (name: string, capital: number, chain: string) => string }> = [
+  { keys: ['lend', 'cdp', 'collateral'], text: (name, capital, chain) => `Supply $${capital} of USDC to ${name} on ${chain} and keep the position open.` },
+  { keys: ['dex', 'yield', 'leveraged farm'], text: (name, capital, chain) => `Provide $${capital} of liquidity to ${name}'s main pool on ${chain} and keep the position open.` },
+  { keys: ['bridge'], text: (name, capital, chain) => `Bridge $${capital} of USDC to ${chain} through ${name} and use the bridged funds in its app.` },
+  { keys: ['staking', 'restak'], text: (name, capital, chain) => `Stake $${capital} of the chain's staking asset through ${name} and keep the receipt.` },
+  { keys: ['perpetual', 'derivative'], text: (name, capital, chain) => `Deposit $${capital} of USDC as margin on ${name} and open one small hedge.` },
+  { keys: ['prediction'], text: (name, capital, chain) => `Fund $${capital} and place one market position on ${name}.` },
+  { keys: ['curator', 'allocator'], text: (name, capital, chain) => `Deposit $${capital} into a ${name} vault on ${chain} and keep the shares.` },
+  { keys: ['stable'], text: (name, capital, chain) => `Mint or deposit $${capital} of the stable asset through ${name} on ${chain}.` },
+  { keys: ['rwa'], text: (name, capital, chain) => `Mint $${capital} of the protocol's yield asset on ${chain} and hold it.` },
+  { keys: ['insurance'], text: (name, capital, chain) => `Buy $${capital} of cover from ${name} on ${chain} and keep the policy.` },
+];
+
+/** The category's one action, in words a farmer can follow, from the table above. */
+function actionFor(p: SnapshotProtocol, capital: number, chain: string): string {
+  const category = (p.category ?? '').toLowerCase();
+  for (const row of FARM_ACTIONS) {
+    if (row.keys.some((key) => category.includes(key))) return row.text(p.name, capital, chain);
+  }
+  return `Deposit $${capital} of USDC into ${p.name} on ${chain} and keep the position open.`;
+}
+
 /**
  * A protocol's farm plan: six steps, each an action with a cost and a time. The plan is derived from
  * the protocol's own record (category, chains, TVL, age), never from a hand-written list of names.
  */
 export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
-  const chain = chainOf(p);
-  const capital = capitalFor(p);
-  const hold = holdDaysFor(age);
+  const budget = budgetFor(p, age);
+  const { chain, capital, holdDays: hold, gasUsd: gas } = budget;
   const action = actionFor(p, capital, chain);
-  const gas = gasFor(chain);
   return [
     {
       text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,

@@ -1,2 +1,4 @@
+# Generated output from `node main.ts` — rebuilt on every run, never committed.
 out/
+# Local tooling, if any is ever installed in the entry.
 node_modules/
