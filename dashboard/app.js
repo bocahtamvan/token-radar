@@ -168,48 +168,60 @@
     });
   }
 
+  // The masthead: the name on the left, the snapshot's provenance on the right.
   function header() {
-    return el('header', { class: 'top' },
-      el('div', { class: 'brand' }, el('span', { class: 'mark' }), el('span', { class: 'brand-name', text: 'Token Radar' })),
-      el('div', { class: 'top-meta' },
-        el('span', { text: 'Snapshot ' + DATA.as_of }),
-        el('span', { text: 'DefiLlama protocol index' }),
-        el('span', { text: DATA.model_version + ' model' })
-      )
-    );
+    var meta = el('div', { class: 'top-meta' });
+    ['Snapshot ' + DATA.as_of, 'DefiLlama protocol index', DATA.model_version + ' model'].forEach(function (label) {
+      meta.appendChild(el('span', { text: label }));
+    });
+    var brand = el('div', { class: 'brand' }, el('span', { class: 'mark' }), el('span', { class: 'brand-name', text: 'Token Radar' }));
+    return el('header', { class: 'top' }, brand, meta);
   }
 
+  // The lede: what the board is, in one paragraph, and the four counts that prove it covers the watchlist.
   function lede() {
-    return el('section', { class: 'lede' },
-      el('div', null,
-        el('h1', { text: DATA.watchlist_size + ' watchlist protocols, ranked by implied value' }),
-        el('p', { text: 'The watchlist is the floor: every protocol with at least $' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL and no token on record. The early radar adds ' + DATA.early_size + ' pre-token protocols below that floor. Implied value is a model, not a promise.' })
-      ),
-      el('div', { class: 'facts' },
-        el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
-        el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Early rows below the floor' }), el('b', { text: String(DATA.early_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Live-token protocols set aside' }), el('b', { text: String(DATA.live_size) }))
-      )
+    var floorMillions = Math.round(DATA.floor_usd / 1e6);
+    var intro = el('div', null,
+      el('h1', { text: DATA.watchlist_size + ' watchlist protocols, ranked by implied value' }),
+      el('p', { text: 'The watchlist is the floor: every protocol with at least $' + floorMillions + 'M of TVL and no token on record. The early radar adds ' + DATA.early_size + ' pre-token protocols below that floor. Implied value is a model, not a promise.' })
     );
+    var facts = el('div', { class: 'facts' });
+    [
+      ['Watchlist covered', DATA.watchlist_size + ' / ' + DATA.watchlist_size],
+      ['Pre-token rows scored', String(DATA.board_size)],
+      ['Early rows below the floor', String(DATA.early_size)],
+      ['Live-token protocols set aside', String(DATA.live_size)]
+    ].forEach(function (pair) {
+      facts.appendChild(el('div', { class: 'fact' }, el('span', { text: pair[0] }), el('b', { text: pair[1] })));
+    });
+    return el('section', { class: 'lede' }, intro, facts);
   }
 
+  // Search, category filter and the pre-token / live-token switch, plus the row count.
   function controls() {
     var categories = Array.from(new Set(DATA.rows.map(function (r) { return r.category || 'Other'; }))).sort();
     var search = el('input', { type: 'search', id: 'q', placeholder: 'Search name, category or chain', value: state.q, 'aria-label': 'Search the board' });
     search.addEventListener('input', function () { state.q = search.value; writeHash(); render(); });
-    var select = el('select', { id: 'category', 'aria-label': 'Filter by category' },
-      el('option', { value: 'all', text: 'All categories' }),
-      categories.map(function (c) { return el('option', { value: c, text: c, selected: c === state.category ? 'selected' : null }); })
-    );
+    var options = [el('option', { value: 'all', text: 'All categories' })];
+    categories.forEach(function (c) {
+      options.push(el('option', { value: c, text: c, selected: c === state.category ? 'selected' : null }));
+    });
+    var select = el('select', { id: 'category', 'aria-label': 'Filter by category' }, options);
     select.addEventListener('change', function () { state.category = select.value; writeHash(); render(); });
-    var pre = el('button', { type: 'button', 'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false', text: 'Pre-token', onclick: function () { state.tab = 'pre-token'; render(); } });
-    var live = el('button', { type: 'button', 'aria-pressed': state.tab === 'live' ? 'true' : 'false', text: 'Live token', onclick: function () { state.tab = 'live'; render(); } });
+    function tabButton(tab, label) {
+      return el('button', {
+        type: 'button',
+        'aria-pressed': state.tab === tab ? 'true' : 'false',
+        text: label,
+        onclick: function () { state.tab = tab; render(); }
+      });
+    }
+    var countText = state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols';
     return el('div', { class: 'controls' },
       el('div', { class: 'field' }, el('label', { for: 'q', text: 'Search' }), search),
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), select),
-      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
-      el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
+      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, tabButton('pre-token', 'Pre-token'), tabButton('live', 'Live token'))),
+      el('span', { class: 'count', text: countText })
     );
   }
 
