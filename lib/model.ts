@@ -1,12 +1,12 @@
-// The token radar's model: one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model (radar-2): one snapshot of the protocol universe in, one ranked board out.
 //
-// The board covers every slug in the snapshot's watchlist (the floor, never a ceiling) and may add
-// pre-token protocols below the watchlist floor: the early rows the radar exists to find. A protocol is
-// pre-token when its index entry records no token (no market cap, no CoinGecko id, no symbol); the
-// snapshot's live-token protocols are kept apart and shown as the market's own values, never mixed into
-// the ranked board.
+// The board covers every slug in the snapshot's watchlist — the floor, never a ceiling — and adds the
+// pre-token protocols below that floor, the early rows the radar exists to find. A protocol counts as
+// pre-token when its index entry records no token: no market cap, no CoinGecko id, no symbol. The
+// snapshot's live-token protocols are kept apart and shown with the market's own values, never mixed
+// into the ranked board.
 //
-// Implied value follows only from the snapshot's own figures:
+// Implied value follows only from the snapshot's own figures, never from a hand-kept list of names:
 //
 //   base       = tvl_usd x BASE_MULTIPLE
 //   growth     = clamp(change_7d, -80, 150) per cent
@@ -15,8 +15,9 @@
 //   chains     = 1 + 0.025 x min(max(chains - 1, 0), 4)   (breadth: more chains, more entrenched)
 //   implied    = max(1, round(base x growthMult x maturity x chains))
 //
-// The constants are the house model's, stated in the dashboard and changeable in the model sandbox. No
-// protocol name is ever special-cased: the same function scores every row.
+// The constants are stated in the dashboard, where a reader can check them against any row, and the
+// same function scores every protocol. Nothing here names a protocol: change the snapshot and the
+// board changes with it.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
